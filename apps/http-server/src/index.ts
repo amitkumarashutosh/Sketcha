@@ -1,40 +1,120 @@
 import express from "express";
 import { JWT_SECRET } from "@repo/server-common/config";
 import { middleware } from "./middleware";
+import bcrypt from "bcrypt";
 import {
   CreateUserSchema,
   SignInSchema,
   CreateRoomSchema,
 } from "@repo/common/types";
+import { prisma } from "@repo/db/client";
+import jwt from "jsonwebtoken";
 
 const app = express();
+app.use(express.json());
 const port = process.env.PORT || 3001;
 
-app.post("/signup", (req, res) => {
-  const data = CreateUserSchema.safeParse(req.body);
-  if (!data.success) {
-    return res.json({ message: "Incorrect inputs" });
-  }
+app.post("/signup", async (req, res) => {
+  try {
+    const parsed = CreateUserSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: parsed.error.issues[0]?.message,
+      });
+    }
 
-  res.status(201).json({ message: "Account created sucessfully" });
+    const { email, password, name } = parsed.data;
+
+    const existingUser = await prisma.user.findUnique({
+      where: { email },
+    });
+
+    if (existingUser) {
+      return res.status(409).json({ message: "User already exist!" });
+    }
+
+    const hashed = await bcrypt.hash(password, 10);
+
+    const user = await prisma.user.create({
+      data: { email, password: hashed, name },
+    });
+
+    return res.status(201).json({
+      message: "Account created successfully",
+      userId: user.id,
+    });
+  } catch (err) {
+    return res.status(500).json({
+      message: "Internal server error",
+    });
+  }
 });
 
-app.post("/signin", (req, res) => {
-  const data = SignInSchema.safeParse(req.body);
-  if (!data.success) {
-    return res.json({ message: "Incorrect inputs" });
-  }
+app.post("/signin", async (req, res) => {
+  try {
+    const parsed = SignInSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: parsed.error.issues[0]?.message,
+      });
+    }
 
-  res.status(200).json({ message: "Login sucessfully" });
+    const { email, password } = parsed.data;
+
+    const user = await prisma.user.findUnique({
+      where: {
+        email,
+      },
+    });
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const isPasswordCorrect = await bcrypt.compare(password, user.password);
+    if (!isPasswordCorrect) {
+      return res.status(403).json({ message: "Invalid authorization!" });
+    }
+
+    const token = jwt.sign({ userId: user.id }, JWT_SECRET);
+
+    return res.status(200).json({ message: "Login successfully", token });
+  } catch (error) {
+    return res.status(500).json({
+      message: "Internal server error",
+    });
+  }
 });
 
-app.post("/room", middleware, (req, res) => {
-  const data = CreateRoomSchema.safeParse(req.body);
-  if (!data.success) {
-    return res.json({ message: "Incorrect inputs" });
-  }
+app.post("/room", middleware, async (req, res) => {
+  try {
+    const parsed = CreateRoomSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.json({ message: parsed.error.issues[0]?.message });
+    }
+    //@ts-ignore
+    const userId = req.userId;
+    const { name } = parsed.data;
 
-  res.status(200).json({ message: "Room joined successfully" });
+    const isRoomPresent = await prisma.room.findUnique({
+      where: {
+        slug: name,
+      },
+    });
+    if (isRoomPresent) {
+      return res.status(409).json({ message: "Room already exist" });
+    }
+
+    const room = await prisma.room.create({
+      data: { slug: name, adminId: userId },
+    });
+
+    res
+      .status(200)
+      .json({ message: "Room created successfully", roomId: room.id });
+  } catch (error) {
+    return res.status(500).json({ message: "Internal server error" });
+  }
 });
 
 app.get("/health", (req, res) => {
