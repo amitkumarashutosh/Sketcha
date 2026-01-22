@@ -117,6 +117,36 @@ app.post("/room", middleware, async (req, res) => {
   }
 });
 
+app.get("/chats/:roomId", async (req, res) => {
+  try {
+    const roomId = Number(req.params.roomId);
+    const messages = await prisma.chat.findMany({
+      where: { roomId: roomId },
+      orderBy: { id: "desc" },
+      take: 50,
+    });
+
+    return res.status(200).json({ messages });
+  } catch (error) {
+    return res.status(500).json({ message: "Internal server error" });
+  }
+});
+
+app.get("/room/:slug", async (req, res) => {
+  try {
+    const slug = req.params.slug;
+    const room = await prisma.room.findFirst({
+      where: {
+        slug,
+      },
+    });
+
+    return res.status(200).json({ room });
+  } catch (error) {
+    return res.status(500).json({ message: "Internal server error" });
+  }
+});
+
 app.get("/health", (req, res) => {
   res.status(200).json({
     message: "System health! OK",
